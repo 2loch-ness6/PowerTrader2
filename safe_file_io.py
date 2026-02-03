@@ -82,8 +82,9 @@ def _do_atomic_write(path: str, data: Dict[str, Any], dir_path: str, logger: log
             if os.path.exists(backup):
                 try:
                     os.remove(backup)
-                except Exception:
-                    pass  # Non-critical if backup cleanup fails
+                except Exception as cleanup_err:
+                    # Non-critical if backup cleanup fails, but log it
+                    logger.debug(f"Failed to cleanup backup file {backup}: {cleanup_err}")
         else:
             # POSIX: os.replace is atomic
             os.replace(tmp_path, path)
@@ -95,8 +96,8 @@ def _do_atomic_write(path: str, data: Dict[str, Any], dir_path: str, logger: log
         if os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
-            except Exception:
-                pass
+            except Exception as cleanup_err:
+                logger.debug(f"Failed to cleanup temp file {tmp_path}: {cleanup_err}")
         raise e
 
 

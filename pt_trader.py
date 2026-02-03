@@ -472,10 +472,10 @@ class CryptoAPITrading:
                 with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(data, f, indent=2)
                 os.replace(tmp, path)
-            except Exception:
-                pass
-        except Exception:
-            pass
+            except Exception as fallback_err:
+                print(f"[WARNING] Failed to write {path} using fallback: {fallback_err}")
+        except Exception as e:
+            print(f"[WARNING] Failed to write {path}: {e}")
 
     def _append_jsonl(self, path: str, obj: dict) -> None:
         """
@@ -490,10 +490,10 @@ class CryptoAPITrading:
             try:
                 with open(path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(obj) + "\n")
-            except Exception:
-                pass
-        except Exception:
-            pass
+            except Exception as fallback_err:
+                print(f"[WARNING] Failed to append to {path} using fallback: {fallback_err}")
+        except Exception as e:
+            print(f"[WARNING] Failed to append to {path}: {e}")
 
     def _load_pnl_ledger(self) -> dict:
         try:
@@ -1431,7 +1431,9 @@ class CryptoAPITrading:
                         buy_prices[symbol] = ask
                         sell_prices[symbol] = bid
                         valid_symbols.append(symbol)
-                        print(f"[CACHE] Using cached price for {symbol} (age: {time.time() - cached.get('ts', 0):.1f}s)")
+                        # Use cached age from the cached dict
+                        cache_age = time.time() - cached.get('ts', 0)
+                        print(f"[CACHE] Using cached price for {symbol} (age: {cache_age:.1f}s)")
                     else:
                         print(f"[WARNING] No valid price available for {symbol} (API failed and cache invalid)")
                 else:

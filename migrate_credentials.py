@@ -9,6 +9,10 @@ import secrets
 from pathlib import Path
 from credentials_manager import CredentialsManager
 
+# Number of overwrite passes for secure file deletion
+# 3 passes is sufficient for modern storage devices
+SECURE_DELETE_PASSES = 3
+
 
 def secure_delete_file(filepath: str) -> None:
     """
@@ -24,8 +28,8 @@ def secure_delete_file(filepath: str) -> None:
         # Get file size
         file_size = os.path.getsize(filepath)
         
-        # Overwrite with random data (3 passes)
-        for _ in range(3):
+        # Overwrite with random data (multiple passes)
+        for _ in range(SECURE_DELETE_PASSES):
             with open(filepath, 'wb') as f:
                 f.write(secrets.token_bytes(file_size))
                 f.flush()

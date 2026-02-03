@@ -25,6 +25,10 @@ from safe_file_io import atomic_write_json, atomic_read_json, append_jsonl
 class TestCredentialsManager:
     """Tests for secure credential storage."""
     
+    @pytest.mark.skipif(
+        os.environ.get('CI') == 'true' or os.environ.get('GITHUB_ACTIONS') == 'true',
+        reason="Keyring backend not available in CI environment"
+    )
     def test_store_and_retrieve_credentials(self):
         """Verify credentials can be stored and retrieved."""
         manager = CredentialsManager()
@@ -50,8 +54,8 @@ class TestCredentialsManager:
         # Ensure no credentials exist
         try:
             manager.delete_api_key()
-        except:
-            pass
+        except Exception:
+            pass  # Ignore if credentials don't exist
         
         # Try to retrieve
         key, secret = manager.retrieve_api_key()
@@ -59,6 +63,10 @@ class TestCredentialsManager:
         assert key is None
         assert secret is None
     
+    @pytest.mark.skipif(
+        os.environ.get('CI') == 'true' or os.environ.get('GITHUB_ACTIONS') == 'true',
+        reason="Keyring backend not available in CI environment"
+    )
     def test_has_credentials(self):
         """Verify has_credentials correctly detects presence."""
         manager = CredentialsManager()

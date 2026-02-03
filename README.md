@@ -174,6 +174,146 @@ A TRADE WILL START FOR A COIN IF THAT COIN REACHES A LONG LEVEL OF 3 OR HIGHER W
 
 ---
 
+## Security & Reliability Features (NEW in v1.1.0)
+
+PowerTrader2 now includes enterprise-grade security and reliability features:
+
+### 🔐 Secure Credential Storage
+
+Your API keys are now stored encrypted in your operating system's secure keyring instead of plaintext files:
+
+- **macOS**: Keychain
+- **Windows**: Windows Credential Manager  
+- **Linux**: Secret Service (GNOME Keyring, KWallet, etc.)
+
+**Migrating from plaintext files:**
+
+If you already have `r_key.txt` and `r_secret.txt`, migrate them to secure storage:
+
+```bash
+python migrate_credentials.py
+```
+
+This will:
+1. Read your existing credentials
+2. Store them securely in the OS keyring
+3. Securely overwrite and delete the plaintext files
+
+**For new installations**, the GUI wizard will store credentials directly in the keyring.
+
+### 🛡️ File Integrity Protection
+
+Model files are now protected with SHA-256 checksums to detect tampering:
+
+- Checksums generated automatically during training
+- Files verified on load before use
+- Manual rebuild available: `python pt_trainer.py --rebuild-checksums`
+
+### ⏱️ Timeout & Retry for Order Reconciliation
+
+The trader no longer blocks indefinitely on pending orders:
+
+- 5-minute timeout for order reconciliation
+- Exponential backoff with retry logic
+- Stuck orders saved to `problematic_orders.json` for manual review
+- Trader starts even if some orders are stuck
+
+### 🚦 API Rate Limiting
+
+Prevents rate limit violations and account suspension:
+
+- Automatic rate limiting (60 calls/minute)
+- HTTP 429 error handling with exponential backoff
+- Automatic 5-minute trading pause after repeated violations
+- Configurable retry logic
+
+### ⏰ Price Cache TTL
+
+Price cache now expires to prevent trading on stale data:
+
+- Default TTL: 5 seconds (configurable)
+- Expired cache entries rejected automatically
+- Clear warnings when using cached data
+- Protects against trading on outdated prices during API outages
+
+### 💾 Safe File Operations
+
+All critical file writes now use:
+
+- Atomic operations to prevent corruption
+- File locking for concurrent access protection
+- Cross-platform compatibility (Windows & POSIX)
+- Proper fsync to ensure data reaches disk
+
+### 📚 Documentation
+
+- **[SECURITY.md](SECURITY.md)** - Security best practices and vulnerability reporting
+- **[MONITORING.md](MONITORING.md)** - Monitoring and observability guide
+- **[CHANGELOG.md](CHANGELOG.md)** - Detailed change history
+
+For more information, see the documentation files.
+
+---
+
+## Troubleshooting
+
+### Credential Migration Issues
+
+**Problem**: Migration script can't find credential files
+
+**Solution**: Make sure `r_key.txt` and `r_secret.txt` exist in your PowerTrader folder before running migration
+
+---
+
+**Problem**: "Keyring backend not available" error
+
+**Solution**: 
+- **Windows**: No action needed, built-in support
+- **macOS**: No action needed, built-in support  
+- **Linux**: Install a keyring backend:
+  ```bash
+  sudo apt-get install gnome-keyring  # Ubuntu/Debian
+  sudo yum install gnome-keyring      # RHEL/CentOS
+  ```
+
+---
+
+### Stuck Orders
+
+**Problem**: Orders appear in `problematic_orders.json`
+
+**Solution**:
+1. Check order status in Robinhood app/website
+2. If filled: Order will be recorded on next restart
+3. If cancelled: Can be safely ignored
+4. If stuck: Cancel manually in Robinhood, then restart trader
+
+---
+
+### Rate Limiting
+
+**Problem**: Seeing "HTTP 429" or "Rate limited" messages
+
+**Solution**:
+- System will automatically pause for 5 minutes
+- Wait for trading to resume automatically
+- If persistent, check your network/API status
+- Consider reducing trading frequency in settings
+
+---
+
+### Cache Warnings
+
+**Problem**: Seeing "Cache expired" or "Using cached price" messages
+
+**Solution**: 
+- Normal during brief API issues
+- If frequent, check API connectivity
+- Can increase `_cache_ttl_seconds` if needed (in code)
+- Monitor via logs to ensure not trading on stale data
+
+---
+
 ## Donate
 
 PowerTrader AI is COMPLETELY free and open source! If you want to support the project, you can donate or become a member:

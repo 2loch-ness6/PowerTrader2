@@ -13,6 +13,7 @@ from colorama import Fore, Style
 import traceback
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
+import logging
 
 # -----------------------------
 # GUI HUB OUTPUTS
@@ -324,21 +325,46 @@ def _refresh_paths_and_symbols():
 API_KEY = ""
 BASE64_PRIVATE_KEY = ""
 
+# Try to load credentials from OS keyring first, then fall back to plaintext files
 try:
-    with open('r_key.txt', 'r', encoding='utf-8') as f:
-        API_KEY = (f.read() or "").strip()
-    with open('r_secret.txt', 'r', encoding='utf-8') as f:
-        BASE64_PRIVATE_KEY = (f.read() or "").strip()
-except Exception:
-    API_KEY = ""
-    BASE64_PRIVATE_KEY = ""
+    from credentials_manager import CredentialsManager
+    credentials_manager = CredentialsManager()
+    API_KEY, BASE64_PRIVATE_KEY = credentials_manager.retrieve_api_key()
+    
+    if API_KEY and BASE64_PRIVATE_KEY:
+        print("[PowerTrader] ✓ Loaded API credentials from secure keyring")
+    else:
+        # Fall back to plaintext files for backward compatibility
+        print("[PowerTrader] Keyring credentials not found, trying plaintext files...")
+        try:
+            with open('r_key.txt', 'r', encoding='utf-8') as f:
+                API_KEY = (f.read() or "").strip()
+            with open('r_secret.txt', 'r', encoding='utf-8') as f:
+                BASE64_PRIVATE_KEY = (f.read() or "").strip()
+            if API_KEY and BASE64_PRIVATE_KEY:
+                print("[PowerTrader] ⚠ WARNING: Using plaintext credentials. Run 'python migrate_credentials.py' to secure them.")
+        except Exception:
+            API_KEY = ""
+            BASE64_PRIVATE_KEY = ""
+except ImportError:
+    # Keyring not available, fall back to plaintext files
+    print("[PowerTrader] Keyring module not available, using plaintext files...")
+    try:
+        with open('r_key.txt', 'r', encoding='utf-8') as f:
+            API_KEY = (f.read() or "").strip()
+        with open('r_secret.txt', 'r', encoding='utf-8') as f:
+            BASE64_PRIVATE_KEY = (f.read() or "").strip()
+    except Exception:
+        API_KEY = ""
+        BASE64_PRIVATE_KEY = ""
 
 if not API_KEY or not BASE64_PRIVATE_KEY:
     print(
-        "\n[PowerTrader] Robinhood API credentials not found.\n"
-        "Open the GUI and go to Settings → Robinhood API → Setup / Update.\n"
-        "That wizard will generate your keypair, tell you where to paste the public key on Robinhood,\n"
-        "and will save r_key.txt + r_secret.txt so this trader can authenticate.\n"
+        "\n[PowerTrader] ✗ Robinhood API credentials not found.\n"
+        "Options:\n"
+        "  1. Open the GUI and go to Settings → Robinhood API → Setup / Update\n"
+        "  2. If you have r_key.txt and r_secret.txt, run: python migrate_credentials.py\n"
+        "  3. Use the GUI wizard to generate new credentials\n"
     )
     raise SystemExit(1)
 
@@ -382,6 +408,7 @@ class CryptoAPITrading:
 
         # Cache last known bid/ask per symbol so transient API misses don't zero out account value
         self._last_good_bid_ask = {}
+        self._cache_ttl_seconds = 5  # Cache TTL (configurable)
 
         # Cache last *complete* account snapshot so transient holdings/price misses can't write a bogus low value
         self._last_good_account_snapshot = {
@@ -400,6 +427,29 @@ class CryptoAPITrading:
         self._dca_last_sell_ts = {}   # { "BTC": ts_of_last_sell }
         self._seed_dca_window_from_history()
 
+    def _get_cached_price(self, symbol: str) -> Optional[dict]:
+        """
+        Get cached price data for a symbol if not expired.
+        
+        Args:
+            symbol: Trading symbol
+            
+        Returns:
+            Cached price data dict with 'ask', 'bid', 'ts' or None if expired/missing
+        """
+        if symbol not in self._last_good_bid_ask:
+            return None
+        
+        cached = self._last_good_bid_ask[symbol]
+        cached_at = cached.get("ts", 0)
+        age = time.time() - cached_at
+        
+        if age > self._cache_ttl_seconds:
+            print(f"[CACHE] Cache expired for {symbol} (age: {age:.1f}s > TTL: {self._cache_ttl_seconds}s)")
+            return None
+        
+        return cached
+
 
 
 
@@ -408,20 +458,42 @@ class CryptoAPITrading:
 
 
     def _atomic_write_json(self, path: str, data: dict) -> None:
+        """
+        Write JSON data atomically with cross-platform support.
+        Uses the safe_file_io module for improved reliability.
+        """
         try:
-            tmp = f"{path}.tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp, path)
-        except Exception:
-            pass
+            from safe_file_io import atomic_write_json
+            atomic_write_json(path, data, use_lock=True)
+        except ImportError:
+            # Fallback to simple implementation if safe_file_io not available
+            try:
+                tmp = f"{path}.tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp, path)
+            except Exception as fallback_err:
+                print(f"[WARNING] Failed to write {path} using fallback: {fallback_err}")
+        except Exception as e:
+            print(f"[WARNING] Failed to write {path}: {e}")
 
     def _append_jsonl(self, path: str, obj: dict) -> None:
+        """
+        Append a JSON object to a JSONL file with file locking.
+        Uses the safe_file_io module for improved reliability.
+        """
         try:
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(obj) + "\n")
-        except Exception:
-            pass
+            from safe_file_io import append_jsonl
+            append_jsonl(path, obj, use_lock=True)
+        except ImportError:
+            # Fallback to simple implementation if safe_file_io not available
+            try:
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(obj) + "\n")
+            except Exception as fallback_err:
+                print(f"[WARNING] Failed to append to {path} using fallback: {fallback_err}")
+        except Exception as e:
+            print(f"[WARNING] Failed to append to {path}: {e}")
 
     def _load_pnl_ledger(self) -> dict:
         try:
@@ -541,31 +613,119 @@ class CryptoAPITrading:
         except Exception:
             return 0.0, None
 
-    def _wait_for_order_terminal(self, symbol: str, order_id: str) -> Optional[dict]:
-        """Blocks until order is filled/canceled/rejected, then returns the order dict."""
+    def _wait_for_order_terminal(self, symbol: str, order_id: str, max_wait_seconds: int = 300) -> Optional[dict]:
+        """
+        Blocks until order is filled/canceled/rejected, then returns the order dict.
+        
+        Args:
+            symbol: Trading symbol
+            order_id: Order ID to wait for
+            max_wait_seconds: Maximum time to wait in seconds (default: 300 = 5 minutes)
+            
+        Returns:
+            Order dict if terminal state reached, None if timeout
+        """
         terminal = {"filled", "canceled", "cancelled", "rejected", "failed", "error"}
+        start_time = time.time()
+        retry_count = 0
+        
         while True:
+            elapsed = time.time() - start_time
+            if elapsed > max_wait_seconds:
+                print(f"[TIMEOUT] Order {order_id} did not reach terminal state in {max_wait_seconds}s")
+                return None
+            
             o = self._get_order_by_id(symbol, order_id)
             if not o:
-                time.sleep(1)
+                time.sleep(min(2 ** retry_count, 30))  # Exponential backoff, max 30s
+                retry_count += 1
                 continue
+            
             st = str(o.get("state", "")).lower().strip()
             if st in terminal:
                 return o
+            
             time.sleep(1)
 
-    def _reconcile_pending_orders(self) -> None:
+    def _handle_stuck_orders(self, stuck_orders: dict) -> None:
+        """
+        Handle orders that couldn't be reconciled.
+        Logs details and saves to problematic_orders.json for manual review.
+        
+        Args:
+            stuck_orders: Dictionary of stuck order_id -> order_info
+        """
+        try:
+            print(f"\n{'='*60}")
+            print(f"[WARNING] Found {len(stuck_orders)} stuck order(s) requiring manual review")
+            print(f"{'='*60}\n")
+            
+            # Log each stuck order
+            for order_id, info in stuck_orders.items():
+                print(f"Stuck Order ID: {order_id}")
+                print(f"  Symbol: {info.get('symbol', 'N/A')}")
+                print(f"  Side: {info.get('side', 'N/A')}")
+                print(f"  Buying Power Before: ${info.get('buying_power_before', 0.0):.2f}")
+                print()
+            
+            # Save to problematic_orders.json
+            problematic_path = os.path.join(HUB_DATA_DIR, "problematic_orders.json")
+            try:
+                existing = {}
+                if os.path.exists(problematic_path):
+                    with open(problematic_path, 'r', encoding='utf-8') as f:
+                        existing = json.load(f)
+                
+                # Add timestamp to stuck orders
+                for order_id, info in stuck_orders.items():
+                    info['stuck_timestamp'] = datetime.datetime.now().isoformat()
+                    existing[order_id] = info
+                
+                with open(problematic_path, 'w', encoding='utf-8') as f:
+                    json.dump(existing, f, indent=2)
+                
+                print(f"Stuck orders saved to: {problematic_path}")
+                print(f"Please review these orders manually.\n")
+                
+            except Exception as e:
+                print(f"Failed to save stuck orders: {e}")
+            
+        except Exception as e:
+            print(f"Error in _handle_stuck_orders: {e}")
+
+    def _reconcile_pending_orders(self, max_wait_seconds: int = 300) -> None:
         """
         If the hub/trader restarts mid-order, we keep the pre-order buying_power on disk and
         finish the accounting once the order shows as terminal in Robinhood.
+        
+        Args:
+            max_wait_seconds: Maximum time to wait for all orders (default: 300 = 5 minutes)
         """
         try:
             pending = self._pnl_ledger.get("pending_orders", {})
             if not isinstance(pending, dict) or not pending:
                 return
 
+            start_time = time.time()
+            max_retries = 10
+            retry_count = 0
+            stuck_orders = {}
+
             # Loop until everything pending is resolved (matches your design: bot waits here).
             while True:
+                elapsed = time.time() - start_time
+                if elapsed > max_wait_seconds:
+                    print(f"[TIMEOUT] Order reconciliation timeout after {max_wait_seconds}s")
+                    # Save remaining pending orders as stuck
+                    pending = self._pnl_ledger.get("pending_orders", {})
+                    if pending:
+                        stuck_orders.update(pending)
+                        self._handle_stuck_orders(stuck_orders)
+                        # Clear pending orders to allow trader to start
+                        self._pnl_ledger["pending_orders"] = {}
+                        self._save_pnl_ledger()
+                    break
+                
                 pending = self._pnl_ledger.get("pending_orders", {})
                 if not isinstance(pending, dict) or not pending:
                     break
@@ -591,8 +751,15 @@ class CryptoAPITrading:
                             progressed = True
                             continue
 
-                        order = self._wait_for_order_terminal(symbol, order_id)
+                        # Wait for order with timeout
+                        remaining_time = max(10, max_wait_seconds - elapsed)  # At least 10s per order
+                        order = self._wait_for_order_terminal(symbol, order_id, max_wait_seconds=int(remaining_time))
                         if not order:
+                            # Order didn't reach terminal state in time - mark as stuck
+                            stuck_orders[order_id] = info
+                            self._pnl_ledger["pending_orders"].pop(order_id, None)
+                            self._save_pnl_ledger()
+                            progressed = True
                             continue
 
                         state = str(order.get("state", "")).lower().strip()
@@ -631,7 +798,21 @@ class CryptoAPITrading:
                         continue
 
                 if not progressed:
-                    time.sleep(1)
+                    if retry_count >= max_retries:
+                        print(f"[WARNING] Max retries ({max_retries}) reached for order reconciliation")
+                        # Save remaining as stuck and break
+                        pending = self._pnl_ledger.get("pending_orders", {})
+                        if pending:
+                            stuck_orders.update(pending)
+                            self._handle_stuck_orders(stuck_orders)
+                            self._pnl_ledger["pending_orders"] = {}
+                            self._save_pnl_ledger()
+                        break
+                    
+                    time.sleep(min(2 ** retry_count, 30))  # Exponential backoff
+                    retry_count += 1
+                else:
+                    retry_count = 0  # Reset on progress
 
         except Exception:
             pass
@@ -1239,7 +1420,7 @@ class CryptoAPITrading:
                 # Fallback to cached bid/ask so account value never drops due to a transient miss
                 cached = None
                 try:
-                    cached = self._last_good_bid_ask.get(symbol)
+                    cached = self._get_cached_price(symbol)
                 except Exception:
                     cached = None
 
@@ -1250,6 +1431,13 @@ class CryptoAPITrading:
                         buy_prices[symbol] = ask
                         sell_prices[symbol] = bid
                         valid_symbols.append(symbol)
+                        # Use cached age from the cached dict
+                        cache_age = time.time() - cached.get('ts', 0)
+                        print(f"[CACHE] Using cached price for {symbol} (age: {cache_age:.1f}s)")
+                    else:
+                        print(f"[WARNING] No valid price available for {symbol} (API failed and cache invalid)")
+                else:
+                    print(f"[WARNING] No valid price available for {symbol} (API failed and cache expired/missing)")
 
         return buy_prices, sell_prices, valid_symbols
 

@@ -5,3 +5,6 @@ colorama
 cryptography
 PyNaCl
 kucoin-python
+keyring
+prometheus-client
+filelock

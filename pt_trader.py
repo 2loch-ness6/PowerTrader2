@@ -13,6 +13,7 @@ from colorama import Fore, Style
 import traceback
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
+import logging
 
 # -----------------------------
 # GUI HUB OUTPUTS
@@ -324,21 +325,46 @@ def _refresh_paths_and_symbols():
 API_KEY = ""
 BASE64_PRIVATE_KEY = ""
 
+# Try to load credentials from OS keyring first, then fall back to plaintext files
 try:
-    with open('r_key.txt', 'r', encoding='utf-8') as f:
-        API_KEY = (f.read() or "").strip()
-    with open('r_secret.txt', 'r', encoding='utf-8') as f:
-        BASE64_PRIVATE_KEY = (f.read() or "").strip()
-except Exception:
-    API_KEY = ""
-    BASE64_PRIVATE_KEY = ""
+    from credentials_manager import CredentialsManager
+    credentials_manager = CredentialsManager()
+    API_KEY, BASE64_PRIVATE_KEY = credentials_manager.retrieve_api_key()
+    
+    if API_KEY and BASE64_PRIVATE_KEY:
+        print("[PowerTrader] ✓ Loaded API credentials from secure keyring")
+    else:
+        # Fall back to plaintext files for backward compatibility
+        print("[PowerTrader] Keyring credentials not found, trying plaintext files...")
+        try:
+            with open('r_key.txt', 'r', encoding='utf-8') as f:
+                API_KEY = (f.read() or "").strip()
+            with open('r_secret.txt', 'r', encoding='utf-8') as f:
+                BASE64_PRIVATE_KEY = (f.read() or "").strip()
+            if API_KEY and BASE64_PRIVATE_KEY:
+                print("[PowerTrader] ⚠ WARNING: Using plaintext credentials. Run 'python migrate_credentials.py' to secure them.")
+        except Exception:
+            API_KEY = ""
+            BASE64_PRIVATE_KEY = ""
+except ImportError:
+    # Keyring not available, fall back to plaintext files
+    print("[PowerTrader] Keyring module not available, using plaintext files...")
+    try:
+        with open('r_key.txt', 'r', encoding='utf-8') as f:
+            API_KEY = (f.read() or "").strip()
+        with open('r_secret.txt', 'r', encoding='utf-8') as f:
+            BASE64_PRIVATE_KEY = (f.read() or "").strip()
+    except Exception:
+        API_KEY = ""
+        BASE64_PRIVATE_KEY = ""
 
 if not API_KEY or not BASE64_PRIVATE_KEY:
     print(
-        "\n[PowerTrader] Robinhood API credentials not found.\n"
-        "Open the GUI and go to Settings → Robinhood API → Setup / Update.\n"
-        "That wizard will generate your keypair, tell you where to paste the public key on Robinhood,\n"
-        "and will save r_key.txt + r_secret.txt so this trader can authenticate.\n"
+        "\n[PowerTrader] ✗ Robinhood API credentials not found.\n"
+        "Options:\n"
+        "  1. Open the GUI and go to Settings → Robinhood API → Setup / Update\n"
+        "  2. If you have r_key.txt and r_secret.txt, run: python migrate_credentials.py\n"
+        "  3. Use the GUI wizard to generate new credentials\n"
     )
     raise SystemExit(1)
 

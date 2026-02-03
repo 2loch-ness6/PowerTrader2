@@ -8,3 +8,4 @@ kucoin-python
 keyring
 prometheus-client
 filelock
+pytest
